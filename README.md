@@ -39,6 +39,12 @@ You can view the Javadoc [here](https://experiandataquality.github.io/aperture-d
     - [Instantiating your parser and creating any required parameters](#instantiating-your-parser-and-creating-any-required-parameters)
     - [Providing a method that attempts to parse the data file](#providing-a-method-that-attempts-to-parse-the-data-file)
     - [Performing the actual parse](#performing-the-actual-parse)
+- [Testing the custom step](#testing-the-custom-step)
+    - [Adding Test Framework SDK dependency](#adding-test-framework-sdk-dependency)
+    - [Writing custom step tests](#writing-custom-step-tests)
+    - [Test Framework API](#test-framework-api)
+        - [Configuration API](#configuration-api)
+        - [Execution and Assertion API](#execution-and-assertion-api)
 - [Reading Data Studio Properties](#reading-data-studio-values)
     - [Constants](#constants)
     - [Glossary Values](#glossary-values)
@@ -630,6 +636,203 @@ Furthermore, the implementation may vary significantly depending on the output i
  ### Exceptions
  
  Where the custom parser is faced with an unexpected situation, the `CustomParseException` class can be used to throw an exception. Whilst the attemptParse method should be made fairly resilient to unexpected content (and use the result status where possible), the actual parse method should throw exceptions of this class when it encounters a situation it cannot handle. 
+ 
+ ## Testing the custom step
+ 
+ Apart from SDK to develop the custom step, there is also an SDK Test Framework that could help you with testing the custom step
+ at the component level using `JUnit`.  
+ The Test Framework would help to mock the behavior of Aperture Data Studio when the custom step is installed and used in a workflow.
+ This would ensure the custom step would work with the Aperture Data Studio as well as helpful in creating a test suite for
+ regressions testing.
+ 
+ ### Adding Test Framework SDK dependency
+ 1. If you are building the custom step from the sample project, the Test Framework has already been included as a test
+ dependency.
+ 2. If you are starting from a new or existing project, download the [sdk-test-framework-1.0.0.jar](sdk-test-framework-1.0.0.jar)
+ and put it in the libs folder as where the *sdk.jar* has been placed before. Then add the Test Framework as the test
+ dependency.
+ 
+ ### Writing custom step tests
+ 
+ It is recommended that the tests are created based on the sample tests that have been written for the `StepTemplate`.
+ The test suite template has been created to cater the minimum or sufficient coverage for regressions testing as well as to ensure
+ the custom step would work in Aperture Data Studio. 
+ 
+ There is also an example step with tests that shows how to write tests against a custom step that consume an external
+ rest api service.
+ 
+ ### Test Framework API
+ 
+ The api is designed to be separated into two parts, the *configuration* api to simulate the UI configuration and the *execution/assertion*
+ api for the step execution in a workflow.
+   
+ #### Configuration API
+ 
+ In order to execute, a custom step might need to be connected to an input (e.g a source step or previous step output).
+ It might also require the user to input some argument values defined in the custom step's step properties. The custom step
+ might also depends on a certain Server Constant, Glossaries, or Properties during execution. These APIs would help to
+ setup those so that the step could be executed.
+ 
+ The test should always start from `StepTestBuilder` class to configure the target step to test as well configuring the
+ mock behavior of Aperture Data Studio.
+ 
+ ```java
+ // Use this api to target the custom step directly by instantiating the step class yourself. This way is useful if the
+ // step contains a constructor overload with a mock-able external dependencies.
+ StepTestBuilder
+    .fromCustomStep(new MyCustomStepConfiguration())
+ ```
+ 
+ or 
+ 
+ ```java
+ // Use this api to load the custom step bundled in a jar.
+ StepTestBuilder
+    .fromJar("path/to/MyCustomStep.jar")
+    .useCustomStep("MyCustomStep")
+    
+ ```
+ Specify the input to your test. The api below would simulate the scenario when the custom step input is connected to an
+ output of a step. Typically the output of a step is in the form of a table. You can specify a csv file as the input for
+ the test.
+ 
+ ```java
+ StepTestBuilder
+    .fromCustomStep(new MyCustomStepConfiguration())
+    .withCsvInput("path/to/input.csv")
+ ```
+ 
+ To mock the Aperture Data Studio values so that the custom step could access them in the test, use the api provided.
+ 
+ ```java
+ StepTestBuilder
+     .fromCustomStep(new MyCustomStepConfiguration())
+     .withServerProperty(propertyName, propertyValue) // Specify the server properties required
+     .withConstantValues(constantValues) // Specify a collection of server constant values, or
+     .withConstantValue(name, value) // Add a single server constant value 
+ ```
+ 
+ To simulate when the "*Show data*" link is click on the custom step, configure the test to run in interactive mode.
+ 
+ ```java
+  StepTestBuilder
+      .fromCustomStep(new MyCustomStepConfiguration())
+      .isInteractive(true) // This would return true in isInteractive() api call in the StepOutput.
+ ```  
+ 
+ The test framework would record the progress calls throughout the step execution so that it could be asserted later.
+ In addition to that, there is also an api to hook a custom progress call callback if required.
+ 
+ ```java
+ StepTestBuilder
+    .fromCustomStep(new MyCustomStepConfiguration())
+    .onProgressReport((message, progress) -> { 
+       // do something with the progress
+    })
+ ``` 
+ 
+ Before the step could be executed, the step property values (or argument) will need to be specified. For example,
+ specify the selected column from the output of the previous step.
+ 
+ ```java
+ StepTestBuilder
+    .fromCustomStep(new MyCustomStepConfiguration())
+    .withCsvInput("path/to/input.csv") // input.csv contains a column name "Color id"
+    .withStepPropertyValue(0, "Color id") // Specify that for 1st step property (argument), we chose column "Color id"
+ ```
+ 
+ After you have done configuring the test, call the `build()` method that would return a `TestSession` object. This object
+ represent the current test that contains the api for assertion as well as for execution. The build would also validate
+ the following:
+ 
+ 1. Validate that the target step is not `null`. This might happened when the step is loaded from a jar file.
+ 2. Validate that the step has a valid package name. Each custom step has to be in the package derived from a specific name, i.e: `com.experian.aperture.datastudio.sdk.step`
+ 3. Validate that the `StepOutput` has been initialized. Each step configuration will need to call `setStepOutput()` to initialized the step output.
+ 4. Validate that the input node would not have duplicate names.
+ 5. Validate that the output node is not more than 1. The current version of SDK only supports up to 1 output node.
+ 
+ ```java
+ StepTestBuilder
+     .fromCustomStep(new MyCustomStepConfiguration())
+     .withCsvInput("path/to/input.csv") // input.csv contains a column name "Color id"
+     .withStepPropertyValue(0, "Color id")
+     .build()
+ ```
+ 
+ #### Execution and Assertion API
+ 
+ Before testing the execution of the step, you should assert the step has the expected properties (arguments), input nodes,
+ and output node.
+ 
+ ```java
+ StepTestBuilder
+      .fromCustomStep(new MyCustomStepConfiguration())
+      ... // Removed for brevity
+      .build()
+      .getArgumentCount() // get the step properties or argument count defined in the StepConfiguration and then assert
+      // or
+      .getInputNodeCount() // get the input node count and then assert
+      // or
+      .getOutputNodeCount() // get the output node count and then assert
+ ``` 
+ 
+ Call the `execute()` to execute the custom step. This api would simulate the behavior of Aperture Data Studio where
+ the step will need to be in complete state (returned by `isComplete()`), then the `StepOutput` will be initialized, and executed.
+ The execution would return an `SDKAssertion` object which contains the api to assert the output of execution. If the
+ step is not complete, an `SDKTestException` would be thrown.
+ 
+ ```java
+ final SDKAssertion assertion = StepTestBuilder
+       .fromCustomStep(new MyCustomStepConfiguration())
+       ... // Removed for brevity
+       .build()
+       .execute(); // Throws SDKTestException here if the step is not complete, i.e: Did not set an argument/property value.
+
+ ```
+ 
+ Assert the output columns after the execution are as expected.
+ 
+ ```java
+ // Continuing from assertion object return from the execute()
+ assertion
+    .assertColumnName(3, "My custom column") // assert the column added by the custom step.
+    .assertColumnSize(3) // assert the total column is correct.
+    
+ ```
+ 
+ Assert the rows from input are executed or processed as expected.
+ 
+ ```java
+ // Continuing from assertion object return from the execute()
+ assertion
+    .assertThatAllRowsIsExecuted() // assert that total of executed rows are the same as total of input rows.
+    // or
+    .assertExecutedRowCount() // assert specific no of rows for case where the StepOutput.execute() return more or less than the input rows, e.g filter step.
+ ```
+ 
+ Assert the output column values from the step are as expected. The column assertion would return an `SDKAsyncAssertion`
+ object as it is an async operation. This is to simulate the behavior in Aperture Data Studio where the grid view column value
+ is typically processed asynchronously. This way, you can also test that the `getValueAt()` from the `StepOutput` is thread-safe.
+ 
+ ```java
+ assertion
+    .assertColumnValueAt(row1, column3, "Value") // assert that at row 1, column 3, the value is as expected.
+    .assertColumnValueAt(row2, column3, "Value2")
+    .waitForAssertion() // wait for the async assertion to finish.
+ ```
+ 
+ Other than asserting the output rows and columns, there are also miscellaneous api to assert various part of the step execution.
+ 
+ ```java
+ assertion
+    .assertServerProperty(key, value) // assert the server property is as expected.
+    // or
+    .closeCustomStep()                          // close the custom step simulating the completion of workflow execution/closing show data.
+    .assertCacheIsValid(myCacheName)            // assert that the cache is still valid after closing the step.
+    .assertCacheValue(myCacheName, key, value)  // assert the value stored in cache during or after execution is as expected.
+    // or
+    .assertArgumentValue(index, value) // assert the argument value is as expected.
+ ```
  
  ## Reading Data Studio Values
  

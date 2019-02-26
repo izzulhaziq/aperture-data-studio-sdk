@@ -52,6 +52,12 @@ public class StepTemplate extends StepConfiguration {
         setStepOutput(new MyStepTemplate());
     }
 
+    @Override
+    public Boolean isComplete() {
+        // Prevent from executing this step until input node has been connected.
+        return this.getStepProperties().stream().allMatch(p -> p.getValue() != null);
+    }
+
     /**
      * inner class to define the output of the step, i.e. the columns and rows.
      * In this case only the essential abstract methods are implemented,
